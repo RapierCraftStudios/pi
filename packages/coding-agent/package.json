@@ -1,13 +1,14 @@
 {
 	"name": "@earendil-works/pi-coding-agent",
 	"version": "0.83.0",
-	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
+	"description": "ForgeDock's provider-neutral delivery terminal, built on Pi",
 	"type": "module",
 	"piConfig": {
-		"configDir": ".pi"
+		"name": "forgedock",
+		"configDir": ".forgedock"
 	},
 	"bin": {
-		"pi": "dist/cli.js"
+		"forgedock-pi": "dist/cli.js"
 	},
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -88,11 +89,11 @@
 		"tui",
 		"agent"
 	],
-	"author": "Mario Zechner",
+	"author": "Mario Zechner and ForgeDock contributors",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
+		"url": "git+https://github.com/RapierCraftStudios/pi.git",
 		"directory": "packages/coding-agent"
 	},
 	"engines": {

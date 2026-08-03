@@ -26,13 +26,14 @@ const ANALYTICS_OPTIONS: Array<{ value: boolean; label: string }> = [
 	{ value: false, label: "Don't share" },
 ];
 
-const SETUP_LOGO_LINES = ["██████", "██  ██", "████  ██", "██    ██"];
+const SETUP_LOGO_LINES =
+	APP_NAME === "forgedock" ? ["   ▄▄████████", " ▄█████▀▀▀▀▀", " ▀▀ ▄████▀", "   ▀▀▀"] : ["██████", "██  ██", "████  ██", "██    ██"];
 
 /** First-time setup dialog: theme choice and analytics opt-in. */
 export class FirstTimeSetupComponent extends Container {
 	private step: "theme" | "analytics" = "theme";
 	private themeIndex: number;
-	private analyticsIndex = 0;
+	private analyticsIndex = APP_NAME === "forgedock" ? 1 : 0;
 	private readonly options: FirstTimeSetupOptions;
 
 	constructor(options: FirstTimeSetupOptions) {
@@ -52,9 +53,11 @@ export class FirstTimeSetupComponent extends Container {
 		this.addChild(new Spacer(1));
 		this.addChild(new Text(theme.fg("accent", SETUP_LOGO_LINES.join("\n")), 1, 0));
 		this.addChild(new Spacer(1));
-		this.addChild(
-			new Text(theme.fg("accent", theme.bold(`Welcome to ${APP_NAME}, the minimal coding agent.`)), 1, 0),
-		);
+		const welcome =
+			APP_NAME === "forgedock"
+				? "Welcome to ForgeDock — provider-neutral delivery, powered by Pi."
+				: `Welcome to ${APP_NAME}, the minimal coding agent.`;
+		this.addChild(new Text(theme.fg("accent", theme.bold(welcome)), 1, 0));
 		this.addChild(new Spacer(1));
 
 		if (this.step === "theme") {
@@ -71,7 +74,9 @@ export class FirstTimeSetupComponent extends Container {
 				new Text(
 					theme.fg(
 						"muted",
-						"Opting in stores a tracking identifier in settings.json and enables anonymous\nusage analytics. This helps us to better debug, reproduce, and resolve issues\nand bugs within Pi. You can observe what is shared using /privacy and make\nchanges anytime in settings.json.",
+						APP_NAME === "forgedock"
+							? "Analytics are off by default in ForgeDock. You can change this preference\nanytime in settings.json."
+							: "Opting in stores a tracking identifier in settings.json and enables anonymous\nusage analytics. This helps us to better debug, reproduce, and resolve issues\nand bugs within Pi. You can observe what is shared using /privacy and make\nchanges anytime in settings.json.",
 					),
 					1,
 					0,

@@ -117,6 +117,7 @@ import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
 import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
 import { FooterComponent, formatTokens } from "./components/footer.ts";
+import { renderForgeDockBrand } from "./components/forgedock-header.ts";
 import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { ModelSelectorComponent } from "./components/model-selector.ts";
@@ -730,7 +731,10 @@ export class InteractiveMode {
 
 		// Add header with keybindings from config (unless silenced)
 		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
-			const logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
+			const logo =
+				APP_NAME === "forgedock"
+					? renderForgeDockBrand(this.version)
+					: theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
 
 			// Build startup instructions using keybinding hint helpers
 			const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
@@ -769,7 +773,9 @@ export class InteractiveMode {
 			);
 			const onboarding = theme.fg(
 				"dim",
-				`Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.`,
+				APP_NAME === "forgedock"
+					? "ForgeDock uses Pi for interaction and execution; GitHub artifacts and the typed controller remain authoritative."
+					: "Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.",
 			);
 			this.builtInHeader = new ExpandableText(
 				() => `${logo}\n${compactInstructions}\n${compactOnboarding}\n\n${onboarding}`,
@@ -839,12 +845,15 @@ export class InteractiveMode {
 				.catch(() => {});
 		}
 
-		// Start version check asynchronously
-		checkForNewPiVersion(this.version).then((newRelease) => {
-			if (newRelease) {
-				this.showNewVersionNotification(newRelease);
-			}
-		});
+		// Upstream Pi release notices are not valid update instructions for the
+		// ForgeDock fork; ForgeDock versions are distributed by the parent CLI.
+		if (APP_NAME === "pi") {
+			checkForNewPiVersion(this.version).then((newRelease) => {
+				if (newRelease) {
+					this.showNewVersionNotification(newRelease);
+				}
+			});
+		}
 
 		// Start package update check asynchronously
 		this.checkForPackageUpdates()
@@ -1016,6 +1025,7 @@ export class InteractiveMode {
 	}
 
 	private reportInstallTelemetry(version: string): void {
+		if (APP_NAME !== "pi") return;
 		if (process.env.PI_OFFLINE) {
 			return;
 		}
