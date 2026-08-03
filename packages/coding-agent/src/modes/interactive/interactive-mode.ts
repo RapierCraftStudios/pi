@@ -317,6 +317,8 @@ export interface InteractiveModeOptions {
 	initialImages?: ImageContent[];
 	/** Additional messages to send after the initial message */
 	initialMessages?: string[];
+	/** Run ForgeDock's provider/model onboarding before accepting prompts. */
+	forgeDockOnboarding?: boolean;
 	/** Force verbose startup (overrides quietStartup setting) */
 	verbose?: boolean;
 }
@@ -774,7 +776,7 @@ export class InteractiveMode {
 			const onboarding = theme.fg(
 				"dim",
 				APP_NAME === "forgedock"
-					? "ForgeDock uses Pi for interaction and execution; GitHub artifacts and the typed controller remain authoritative."
+					? "GitHub artifacts are durable memory; ForgeDock's typed controller remains authoritative."
 					: "Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.",
 			);
 			this.builtInHeader = new ExpandableText(
@@ -837,6 +839,10 @@ export class InteractiveMode {
 	 */
 	async run(): Promise<void> {
 		await this.init();
+
+		if (APP_NAME === "forgedock" && this.options.forgeDockOnboarding) {
+			await this.runForgeDockOnboarding();
+		}
 
 		if (!process.env.PI_OFFLINE) {
 			void this.session.modelRuntime
@@ -4862,6 +4868,148 @@ export class InteractiveMode {
 			}
 			return this.handleFatalRuntimeError("Failed to resume session", error);
 		}
+	}
+
+	private async runForgeDockOnboarding(): Promise<void> {
+		this.showStatus("ForgeDock setup · detecting provider credentials");
+		let availableModels: Model<any>[] = [];
+		try {
+			await this.session.modelRuntime.refresh();
+			availableModels = [...(await this.session.modelRuntime.getAvailable())];
+		} catch {
+			availableModels = [...this.session.modelRuntime.getAvailableSnapshot()];
+		}
+
+		let connectProvider = true;
+		if (availableModels.length > 0) {
+			const choice = await this.selectForgeDockSetupChoice(availableModels.length);
+			if (choice === undefined) return;
+			connectProvider = choice === "connect";
+		}
+
+		if (connectProvider) {
+			const provider = await this.selectForgeDockOnboardingProvider();
+			if (!provider) return;
+			await this.startProviderLogin(provider);
+			try {
+				await this.session.modelRuntime.refresh();
+			} catch {
+				// Model selection below reports an empty authenticated catalog clearly.
+			}
+		}
+
+		const model = await this.selectForgeDockOnboardingModel();
+		if (!model) {
+			this.showWarning("ForgeDock setup paused. Run /login and /model to finish, or restart ForgeDock to resume onboarding.");
+			return;
+		}
+
+		this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
+		await this.settingsManager.flush();
+		const receiptPath = path.join(getAgentDir(), "onboarding.json");
+		fs.mkdirSync(path.dirname(receiptPath), { recursive: true });
+		fs.writeFileSync(
+			receiptPath,
+			`${JSON.stringify({ version: 1, completedAt: new Date().toISOString(), provider: model.provider, model: model.id }, null, 2)}\n`,
+			"utf8",
+		);
+		this.showForgeDockOnboardingReceipt(model);
+	}
+
+	private selectForgeDockSetupChoice(modelCount: number): Promise<"detected" | "connect" | undefined> {
+		return new Promise((resolve) => {
+			this.showSelector((done) => {
+				const detected = `Use detected credentials · ${modelCount} model${modelCount === 1 ? "" : "s"} available`;
+				const connect = "Connect or replace a provider account";
+				const selector = new ExtensionSelectorComponent(
+					"Provider setup · step 2 of 3",
+					[detected, connect],
+					(option) => {
+						done();
+						resolve(option === detected ? "detected" : "connect");
+					},
+					() => {
+						done();
+						resolve(undefined);
+					},
+				);
+				return { component: selector, focus: selector };
+			});
+		});
+	}
+
+	private selectForgeDockOnboardingProvider(): Promise<AuthSelectorProvider | undefined> {
+		const providers = this.getLoginProviderOptions().filter(
+			(provider) => provider.authType === "oauth" || provider.method?.login !== undefined,
+		);
+		if (providers.length === 0) {
+			this.showError("No interactive provider login methods are available. Configure a provider key and restart ForgeDock.");
+			return Promise.resolve(undefined);
+		}
+		return new Promise((resolve) => {
+			this.showSelector((done) => {
+				const selector = new OAuthSelectorComponent(
+					"login",
+					providers,
+					(providerId, authType) => {
+						done();
+						resolve(providers.find((provider) => provider.id === providerId && provider.authType === authType));
+					},
+					() => {
+						done();
+						resolve(undefined);
+					},
+				);
+				return { component: selector, focus: selector };
+			});
+		});
+	}
+
+	private selectForgeDockOnboardingModel(): Promise<Model<any> | undefined> {
+		return new Promise((resolve) => {
+			this.showSelector((done) => {
+				const selector = new ModelSelectorComponent(
+					this.ui,
+					this.session.model,
+					this.settingsManager,
+					this.session.modelRuntime,
+					this.session.scopedModels,
+					async (model) => {
+						try {
+							await this.session.setModel(model);
+							this.footer.invalidate();
+							this.updateEditorBorderColor();
+							done();
+							resolve(model);
+						} catch (error) {
+							done();
+							this.showError(error instanceof Error ? error.message : String(error));
+							resolve(undefined);
+						}
+					},
+					() => {
+						done();
+						resolve(undefined);
+					},
+					"",
+				);
+				return { component: selector, focus: selector };
+			});
+		});
+	}
+
+	private showForgeDockOnboardingReceipt(model: Model<any>): void {
+		const card = new Container();
+		card.addChild(new DynamicBorder((text) => theme.fg("borderAccent", text)));
+		card.addChild(new Text(theme.bold(theme.fg("accent", "ForgeDock is ready")), 1, 0));
+		card.addChild(new Text(theme.fg("text", `Provider  ${model.provider}\nModel     ${model.id}`), 1, 0));
+		card.addChild(new Spacer(1));
+		card.addChild(new Text(theme.fg("muted", "Start coding normally, or use /work-on, /review-pr, and /orchestrate for controlled delivery."), 1, 0));
+		card.addChild(new DynamicBorder((text) => theme.fg("borderAccent", text)));
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(card);
+		this.chatContainer.addChild(new Spacer(1));
+		this.ui.requestRender();
 	}
 
 	private getLoginProviderOptions(authType?: "oauth" | "api_key"): AuthSelectorProvider[] {

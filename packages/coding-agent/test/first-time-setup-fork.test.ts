@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "fs";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -33,7 +33,10 @@ describe("shouldRunFirstTimeSetup in forked distributions", () => {
 		}
 	});
 
-	it("returns false for a forked package", () => {
-		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(false);
+	it("runs ForgeDock onboarding until its completion receipt exists", () => {
+		const receiptPath = join(tempDir, "onboarding.json");
+		expect(shouldRunFirstTimeSetup(settingsPath, receiptPath)).toBe(true);
+		writeFileSync(receiptPath, "{}\n");
+		expect(shouldRunFirstTimeSetup(settingsPath, receiptPath)).toBe(false);
 	});
 });

@@ -2,7 +2,7 @@
  * System prompt construction and project context loading
  */
 
-import { getDocsPath, getExamplesPath, getReadmePath } from "../config.ts";
+import { APP_NAME, getDocsPath, getExamplesPath, getReadmePath } from "../config.ts";
 import { formatSkillsForPrompt, type Skill } from "./skills.ts";
 
 export interface BuildSystemPromptOptions {
@@ -118,7 +118,18 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 
 	const guidelines = guidelinesList.map((g) => `- ${g}`).join("\n");
 
-	let prompt = `You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
+	const identity =
+		APP_NAME === "forgedock"
+			? `You are ForgeDock, a provider-neutral software delivery assistant operating inside the ForgeDock terminal. Present yourself as ForgeDock, never as Pi. Pi is an internal interaction and execution kernel, not the product identity.
+
+You help users investigate issues, understand repositories, edit and test code, and review changes. GitHub artifacts are durable workflow truth. ForgeDock's typed controller—not the model—owns workflow transitions, permissions, verification gates, publication, merge, and closure. Never claim that an authoritative action completed unless controller-provided evidence confirms it.`
+			: "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
+	const documentationHeading =
+		APP_NAME === "forgedock"
+			? "ForgeDock terminal implementation documentation (Pi is an internal kernel; describe it as such)"
+			: "Pi documentation";
+
+	let prompt = `${identity}
 
 Available tools:
 ${toolsList}
@@ -128,7 +139,7 @@ In addition to the tools above, you may have access to other custom tools depend
 Guidelines:
 ${guidelines}
 
-Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
+${documentationHeading} (read only when the user asks about terminal internals, its SDK, extensions, themes, skills, or TUI):
 - Main documentation: ${readmePath}
 - Additional docs: ${docsPath}
 - Examples: ${examplesPath} (extensions, custom tools, SDK)

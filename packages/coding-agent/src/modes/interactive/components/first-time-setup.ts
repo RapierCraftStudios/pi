@@ -31,7 +31,7 @@ const SETUP_LOGO_LINES =
 
 /** First-time setup dialog: theme choice and analytics opt-in. */
 export class FirstTimeSetupComponent extends Container {
-	private step: "theme" | "analytics" = "theme";
+	private step: "welcome" | "theme" | "analytics" = APP_NAME === "forgedock" ? "welcome" : "theme";
 	private themeIndex: number;
 	private analyticsIndex = APP_NAME === "forgedock" ? 1 : 0;
 	private readonly options: FirstTimeSetupOptions;
@@ -55,13 +55,19 @@ export class FirstTimeSetupComponent extends Container {
 		this.addChild(new Spacer(1));
 		const welcome =
 			APP_NAME === "forgedock"
-				? "Welcome to ForgeDock — provider-neutral delivery, powered by Pi."
+				? "Welcome to ForgeDock — provider-neutral software delivery."
 				: `Welcome to ${APP_NAME}, the minimal coding agent.`;
 		this.addChild(new Text(theme.fg("accent", theme.bold(welcome)), 1, 0));
 		this.addChild(new Spacer(1));
 
-		if (this.step === "theme") {
-			this.addChild(new Text(theme.fg("text", "Pick a theme."), 1, 0));
+		if (this.step === "welcome") {
+			this.addChild(new Text(theme.fg("text", theme.bold("Delivery with durable memory and deterministic gates.")), 1, 0));
+			this.addChild(new Text(theme.fg("muted", "GitHub stores intent, evidence, review, and outcomes.\nModels can change; your workflow record does not."), 1, 0));
+			this.addChild(new Spacer(1));
+			this.addChild(new Text(theme.fg("text", "First-run setup"), 1, 0));
+			this.addChild(new Text(theme.fg("muted", "  1  Choose your terminal appearance\n  2  Connect a model provider\n  3  Select the model ForgeDock should use"), 1, 0));
+		} else if (this.step === "theme") {
+			this.addChild(new Text(theme.fg("text", "Choose your terminal appearance."), 1, 0));
 			this.addChild(new Text(theme.fg("muted", `Detected system appearance: ${this.options.detectedTheme}`), 1, 0));
 			this.addChild(new Spacer(1));
 			this.addOptionList(
@@ -94,9 +100,9 @@ export class FirstTimeSetupComponent extends Container {
 			new Text(
 				rawKeyHint("↑↓", "navigate") +
 					"  " +
-					keyHint("tui.select.confirm", this.step === "theme" ? "continue" : "finish") +
+					keyHint("tui.select.confirm", this.step === "analytics" ? "continue to provider login" : "continue") +
 					"  " +
-					keyHint("tui.select.cancel", "skip setup"),
+					keyHint("tui.select.cancel", APP_NAME === "forgedock" ? "exit setup" : "skip setup"),
 				1,
 				0,
 			),
@@ -115,6 +121,9 @@ export class FirstTimeSetupComponent extends Container {
 	}
 
 	private moveSelection(delta: number): void {
+		if (this.step === "welcome") {
+			return;
+		}
 		if (this.step === "theme") {
 			const next = Math.max(0, Math.min(THEME_OPTIONS.length - 1, this.themeIndex + delta));
 			if (next !== this.themeIndex) {
@@ -134,7 +143,10 @@ export class FirstTimeSetupComponent extends Container {
 		} else if (kb.matches(keyData, "tui.select.down") || keyData === "j") {
 			this.moveSelection(1);
 		} else if (kb.matches(keyData, "tui.select.confirm") || keyData === "\n") {
-			if (this.step === "theme") {
+			if (this.step === "welcome") {
+				this.step = "theme";
+				this.update();
+			} else if (this.step === "theme") {
 				this.step = "analytics";
 				this.update();
 			} else {

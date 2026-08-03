@@ -1,5 +1,6 @@
 import { ProcessTerminal, setKeybindings, TUI } from "@earendil-works/pi-tui";
 import { existsSync } from "fs";
+import { join } from "path";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, getAgentDir, getSettingsPath, PACKAGE_NAME } from "../config.ts";
 import { areExperimentalFeaturesEnabled } from "../core/experimental.ts";
 import { KeybindingsManager } from "../core/keybindings.ts";
@@ -106,13 +107,18 @@ async function clearStartupTui(ui: TUI): Promise<void> {
 }
 
 /**
- * First-time setup runs when all of these hold:
- * - this is the official Pi distribution (not a fork/rebrand)
- * - experimental features are enabled (PI_EXPERIMENTAL=1)
- * - the default agent directory is used (no custom agent dir override)
- * - setup was not completed before (settings.json does not exist)
+ * First-time setup is mandatory-by-default for the ForgeDock distribution and
+ * remains experimental for upstream Pi. ForgeDock uses a completion receipt
+ * rather than settings.json because theme settings are persisted before
+ * provider authentication and model selection finish.
  */
-export function shouldRunFirstTimeSetup(settingsPath: string = getSettingsPath()): boolean {
+export function shouldRunFirstTimeSetup(
+	settingsPath: string = getSettingsPath(),
+	onboardingPath: string = join(getAgentDir(), "onboarding.json"),
+): boolean {
+	if (APP_NAME === "forgedock") {
+		return !existsSync(onboardingPath);
+	}
 	if (
 		!isOfficialDistribution({
 			packageName: PACKAGE_NAME,
@@ -163,7 +169,7 @@ export async function showStartupSelector<T>(
 }
 
 /** Show the first-time setup dialog and persist the result */
-export async function showFirstTimeSetup(settingsManager: SettingsManager): Promise<void> {
+export async function showFirstTimeSetup(settingsManager: SettingsManager): Promise<boolean> {
 	const ui = await createStartupTui(settingsManager);
 	return new Promise((resolve) => {
 		let settled = false;
@@ -179,7 +185,7 @@ export async function showFirstTimeSetup(settingsManager: SettingsManager): Prom
 			}
 			await clearStartupTui(ui);
 			ui.stop();
-			resolve();
+			resolve(result !== undefined);
 		};
 
 		const showSetup = async () => {

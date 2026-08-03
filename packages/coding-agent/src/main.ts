@@ -24,7 +24,7 @@ import { listModels } from "./cli/list-models.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { selectSession } from "./cli/session-picker.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
-import { ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir, VERSION } from "./config.ts";
+import { APP_NAME, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir, VERSION } from "./config.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
 import {
 	type AgentSessionRuntimeDiagnostic,
@@ -610,10 +610,13 @@ export async function main(args: string[], options?: MainOptions) {
 	const startupSettingsManager = SettingsManager.create(cwd, agentDir);
 	reportDiagnostics(collectSettingsDiagnostics(startupSettingsManager, "startup session lookup"));
 
-	// Experimental first-time setup: theme choice and analytics opt-in.
-	// Runs before any runtime services are created so the chosen settings apply everywhere.
+	// First-run setup runs before runtime services so theme/privacy choices
+	// apply everywhere. ForgeDock continues inside the main TUI with provider
+	// authentication and explicit model selection.
+	let forgeDockOnboarding = false;
 	if (appMode === "interactive" && !parsed.help && parsed.listModels === undefined && shouldRunFirstTimeSetup()) {
-		await showFirstTimeSetup(startupSettingsManager);
+		const setupAccepted = await showFirstTimeSetup(startupSettingsManager);
+		forgeDockOnboarding = APP_NAME === "forgedock" && setupAccepted;
 		time("firstTimeSetup");
 	}
 
@@ -871,6 +874,7 @@ export async function main(args: string[], options?: MainOptions) {
 	} else if (appMode === "interactive") {
 		const interactiveMode = new InteractiveMode(runtime, {
 			migratedProviders,
+			forgeDockOnboarding,
 			modelFallbackMessage,
 			autoTrustOnReloadCwd,
 			initialMessage,

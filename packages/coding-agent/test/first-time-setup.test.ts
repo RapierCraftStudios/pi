@@ -33,26 +33,29 @@ describe("shouldRunFirstTimeSetup", () => {
 		}
 	});
 
-	it("returns true when experimental, default agent dir, and no settings.json", () => {
-		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(true);
+	it("runs ForgeDock onboarding when its receipt is absent", () => {
+		expect(shouldRunFirstTimeSetup(settingsPath, join(tempDir, "onboarding.json"))).toBe(true);
 	});
 
-	it("returns false when experimental features are disabled", () => {
+	it("does not require Pi's experimental flag", () => {
 		delete process.env.PI_EXPERIMENTAL;
-
-		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(false);
+		expect(shouldRunFirstTimeSetup(settingsPath, join(tempDir, "onboarding.json"))).toBe(true);
 	});
 
-	it("returns false when a custom agent dir is set", () => {
+	it("supports a custom ForgeDock agent directory", () => {
 		process.env[ENV_AGENT_DIR] = tempDir;
-
-		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(false);
+		expect(shouldRunFirstTimeSetup(settingsPath, join(tempDir, "onboarding.json"))).toBe(true);
 	});
 
-	it("returns false when settings.json already exists", () => {
+	it("does not mistake partial theme settings for completed onboarding", () => {
 		writeFileSync(settingsPath, "{}", "utf-8");
+		expect(shouldRunFirstTimeSetup(settingsPath, join(tempDir, "onboarding.json"))).toBe(true);
+	});
 
-		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(false);
+	it("stops after a completion receipt is written", () => {
+		const receiptPath = join(tempDir, "onboarding.json");
+		writeFileSync(receiptPath, "{}", "utf-8");
+		expect(shouldRunFirstTimeSetup(settingsPath, receiptPath)).toBe(false);
 	});
 });
 

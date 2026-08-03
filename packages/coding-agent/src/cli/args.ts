@@ -222,7 +222,7 @@ export function printHelp(extensionFlags?: ExtensionFlag[]): void {
 			: "";
 	const description =
 		APP_NAME === "forgedock"
-			? "provider-neutral delivery terminal built on Pi"
+			? "provider-neutral software delivery terminal"
 			: "AI coding assistant with read, bash, edit, write tools";
 	console.log(`${chalk.bold(APP_NAME)} - ${description}
 
