@@ -13,7 +13,7 @@ describe("ForgeDock terminal brand", () => {
 	it("uses ForgeDock—not Pi—as the assistant identity", () => {
 		const prompt = buildSystemPrompt({ cwd: process.cwd(), selectedTools: [] });
 		expect(prompt).toContain("You are ForgeDock");
-		expect(prompt).toContain("Present yourself as ForgeDock, never as Pi");
+		expect(prompt).toContain("You are ForgeDock, a provider-neutral software delivery assistant");
 		expect(prompt).toContain("GitHub artifacts are durable workflow truth");
 		expect(prompt).not.toContain("You are an expert coding assistant operating inside pi");
 	});
