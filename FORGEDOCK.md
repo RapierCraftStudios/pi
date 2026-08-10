@@ -19,6 +19,18 @@ repository injects an extension that delegates `work-on`, `review-pr`, and
 `orchestrate` to ForgeDock's typed controller. GitHub artifacts remain durable
 authority; Pi sessions remain replaceable execution records.
 
+## Terminal UX provenance
+
+ForgeDock's compact tool presentation is informed by MasuRii's MIT-licensed
+[`pi-tool-display`](https://github.com/MasuRii/pi-tool-display). ForgeDock keeps
+execution in the native Pi tool definitions and integrates only render-policy
+ideas rather than loading that extension or replacing tool authority.
+
+Clipboard image attachment behavior is implemented independently on top of
+Pi's existing clipboard, image normalization, and TUI primitives. No source is
+copied from `@pi-archimedes/image-paste`, whose published npm archive does not
+include a license grant.
+
 ## Remotes and update policy
 
 - `origin`: `https://github.com/RapierCraftStudios/pi.git`

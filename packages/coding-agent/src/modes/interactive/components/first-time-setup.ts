@@ -1,6 +1,11 @@
 import { Container, getKeybindings, Spacer, Text } from "@earendil-works/pi-tui";
-import { APP_NAME } from "../../../config.ts";
+import { APP_NAME, VERSION } from "../../../config.ts";
 import { type TerminalTheme, theme } from "../theme/theme.ts";
+import {
+	forgeDockBrandShinePosition,
+	renderForgeDockBrand,
+	shouldAnimateForgeDockBrand,
+} from "./forgedock-header.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, rawKeyHint } from "./keybinding-hints.ts";
 
@@ -14,6 +19,7 @@ export interface FirstTimeSetupOptions {
 	onThemePreview: (themeName: TerminalTheme) => void;
 	onSubmit: (result: FirstTimeSetupResult) => void;
 	onCancel: () => void;
+	onRender?: () => void;
 }
 
 const THEME_OPTIONS: Array<{ value: TerminalTheme; label: string }> = [
@@ -26,15 +32,17 @@ const ANALYTICS_OPTIONS: Array<{ value: boolean; label: string }> = [
 	{ value: false, label: "Don't share" },
 ];
 
-const SETUP_LOGO_LINES =
-	APP_NAME === "forgedock" ? ["   ▄▄████████", " ▄█████▀▀▀▀▀", " ▀▀ ▄████▀", "   ▀▀▀"] : ["██████", "██  ██", "████  ██", "██    ██"];
+const SETUP_LOGO_LINES = ["██████", "██  ██", "████  ██", "██    ██"];
 
-/** First-time setup dialog: theme choice and analytics opt-in. */
+/** First-time setup dialog: appearance and (for upstream Pi) analytics opt-in. */
 export class FirstTimeSetupComponent extends Container {
 	private step: "welcome" | "theme" | "analytics" = APP_NAME === "forgedock" ? "welcome" : "theme";
 	private themeIndex: number;
-	private analyticsIndex = APP_NAME === "forgedock" ? 1 : 0;
+	private analyticsIndex = 0;
 	private readonly options: FirstTimeSetupOptions;
+	private brandText?: Text;
+	private brandShinePosition: number | undefined;
+	private shineTimer?: ReturnType<typeof setInterval>;
 
 	constructor(options: FirstTimeSetupOptions) {
 		super();
@@ -44,6 +52,7 @@ export class FirstTimeSetupComponent extends Container {
 			THEME_OPTIONS.findIndex((option) => option.value === options.detectedTheme),
 		);
 		this.update();
+		this.startBrandShine();
 	}
 
 	// Rebuild the whole dialog on every change so theme previews recolor all text.
@@ -51,11 +60,18 @@ export class FirstTimeSetupComponent extends Container {
 		this.clear();
 		this.addChild(new DynamicBorder());
 		this.addChild(new Spacer(1));
-		this.addChild(new Text(theme.fg("accent", SETUP_LOGO_LINES.join("\n")), 1, 0));
+		this.brandText = new Text(
+			APP_NAME === "forgedock"
+				? renderForgeDockBrand(VERSION, this.brandShinePosition)
+				: theme.fg("accent", SETUP_LOGO_LINES.join("\n")),
+			1,
+			0,
+		);
+		this.addChild(this.brandText);
 		this.addChild(new Spacer(1));
 		const welcome =
 			APP_NAME === "forgedock"
-				? "Welcome to ForgeDock — provider-neutral software delivery."
+				? "Welcome to ForgeDock — provider-neutral software delivery with GitHub as durable institutional memory."
 				: `Welcome to ${APP_NAME}, the minimal coding agent.`;
 		this.addChild(new Text(theme.fg("accent", theme.bold(welcome)), 1, 0));
 		this.addChild(new Spacer(1));
@@ -65,7 +81,16 @@ export class FirstTimeSetupComponent extends Container {
 			this.addChild(new Text(theme.fg("muted", "GitHub stores intent, evidence, review, and outcomes.\nModels can change; your workflow record does not."), 1, 0));
 			this.addChild(new Spacer(1));
 			this.addChild(new Text(theme.fg("text", "First-run setup"), 1, 0));
-			this.addChild(new Text(theme.fg("muted", "  1  Choose your terminal appearance\n  2  Connect a model provider\n  3  Select the model ForgeDock should use"), 1, 0));
+			this.addChild(
+				new Text(
+					theme.fg(
+						"muted",
+						"  1  Choose your terminal appearance\n  2  Connect a provider account or API key\n  3  Select the model ForgeDock should use",
+					),
+					1,
+					0,
+				),
+			);
 		} else if (this.step === "theme") {
 			this.addChild(new Text(theme.fg("text", "Choose your terminal appearance."), 1, 0));
 			this.addChild(new Text(theme.fg("muted", `Detected system appearance: ${this.options.detectedTheme}`), 1, 0));
@@ -96,13 +121,22 @@ export class FirstTimeSetupComponent extends Container {
 		}
 
 		this.addChild(new Spacer(1));
+		const navigationHint =
+			this.step === "welcome"
+				? keyHint("tui.select.confirm", "begin setup")
+				: rawKeyHint("↑↓", "navigate") +
+					  "  " +
+					  keyHint(
+						  "tui.select.confirm",
+						  this.step === "analytics"
+							  ? "continue to provider login"
+							  : APP_NAME === "forgedock"
+								  ? "continue to provider setup"
+								  : "continue",
+					  );
 		this.addChild(
 			new Text(
-				rawKeyHint("↑↓", "navigate") +
-					"  " +
-					keyHint("tui.select.confirm", this.step === "analytics" ? "continue to provider login" : "continue") +
-					"  " +
-					keyHint("tui.select.cancel", APP_NAME === "forgedock" ? "exit setup" : "skip setup"),
+				navigationHint + "  " + keyHint("tui.select.cancel", APP_NAME === "forgedock" ? "exit setup" : "skip setup"),
 				1,
 				0,
 			),
@@ -147,8 +181,15 @@ export class FirstTimeSetupComponent extends Container {
 				this.step = "theme";
 				this.update();
 			} else if (this.step === "theme") {
-				this.step = "analytics";
-				this.update();
+				if (APP_NAME === "forgedock") {
+					this.options.onSubmit({
+						theme: THEME_OPTIONS[this.themeIndex].value,
+						shareAnalytics: false,
+					});
+				} else {
+					this.step = "analytics";
+					this.update();
+				}
 			} else {
 				this.options.onSubmit({
 					theme: THEME_OPTIONS[this.themeIndex].value,
@@ -158,5 +199,32 @@ export class FirstTimeSetupComponent extends Container {
 		} else if (kb.matches(keyData, "tui.select.cancel")) {
 			this.options.onCancel();
 		}
+	}
+
+	private startBrandShine(): void {
+		if (APP_NAME !== "forgedock" || !shouldAnimateForgeDockBrand()) return;
+
+		const frames = 14;
+		let frame = 0;
+		this.brandShinePosition = forgeDockBrandShinePosition(frame, frames);
+		this.brandText?.setText(renderForgeDockBrand(VERSION, this.brandShinePosition));
+		this.options.onRender?.();
+		this.shineTimer = setInterval(() => {
+			frame += 1;
+			this.brandShinePosition =
+				frame <= frames ? forgeDockBrandShinePosition(frame, frames) : undefined;
+			this.brandText?.setText(renderForgeDockBrand(VERSION, this.brandShinePosition));
+			this.options.onRender?.();
+			if (frame > frames && this.shineTimer) {
+				clearInterval(this.shineTimer);
+				this.shineTimer = undefined;
+			}
+		}, 55);
+		this.shineTimer.unref?.();
+	}
+
+	dispose(): void {
+		if (this.shineTimer) clearInterval(this.shineTimer);
+		this.shineTimer = undefined;
 	}
 }

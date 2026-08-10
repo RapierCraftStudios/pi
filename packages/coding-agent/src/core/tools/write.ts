@@ -1,15 +1,18 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Container, Text } from "@earendil-works/pi-tui";
-import { mkdir as fsMkdir, writeFile as fsWriteFile } from "fs/promises";
+import { mkdir as fsMkdir, readFile as fsReadFile, writeFile as fsWriteFile } from "fs/promises";
 import { dirname } from "path";
 import { type Static, Type } from "typebox";
+import { renderDiff } from "../../modes/interactive/components/diff.ts";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import { getLanguageFromPath, highlightCode, type Theme } from "../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import { generateDiffString } from "./edit-diff.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { normalizeDisplayText, renderToolPath, replaceTabs, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
+import { formatSize } from "./truncate.ts";
 
 const writeSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to write (relative or absolute)" }),
@@ -17,6 +20,12 @@ const writeSchema = Type.Object({
 });
 
 export type WriteToolInput = Static<typeof writeSchema>;
+
+export interface WriteToolDetails {
+	/** Display-oriented diff when an existing file was overwritten. */
+	diff?: string;
+	firstChangedLine?: number;
+}
 
 /**
  * Pluggable operations for the write tool.
@@ -27,11 +36,14 @@ export interface WriteOperations {
 	writeFile: (absolutePath: string, content: string) => Promise<void>;
 	/** Create directory recursively */
 	mkdir: (dir: string) => Promise<void>;
+	/** Read existing content for an overwrite preview. Omit for write-only backends. */
+	readFile?: (absolutePath: string) => Promise<Buffer>;
 }
 
 const defaultWriteOperations: WriteOperations = {
 	writeFile: (path, content) => fsWriteFile(path, content, "utf-8"),
 	mkdir: (dir) => fsMkdir(dir, { recursive: true }).then(() => {}),
+	readFile: (path) => fsReadFile(path),
 };
 
 export interface WriteToolOptions {
@@ -56,6 +68,8 @@ class WriteCallRenderComponent extends Text {
 }
 
 const WRITE_PARTIAL_FULL_HIGHLIGHT_LINES = 50;
+const WRITE_DIFF_MAX_CHARS = 1_000_000;
+const WRITE_DIFF_MAX_LINES = 4_000;
 
 function highlightSingleLine(line: string, lang: string): string {
 	const highlighted = highlightCode(line, lang);
@@ -140,6 +154,12 @@ function formatWriteCall(
 	const pathDisplay = renderToolPath(rawPath, theme, cwd);
 	let text = `${theme.fg("toolTitle", theme.bold("write"))} ${pathDisplay}`;
 
+	if (fileContent !== null && fileContent && !options.expanded) {
+		const lineCount = normalizeDisplayText(fileContent).split("\n").length;
+		const size = formatSize(Buffer.byteLength(fileContent, "utf8"));
+		return `${text}${theme.fg("muted", ` (${lineCount} ${lineCount === 1 ? "line" : "lines"} · ${size})`)}`;
+	}
+
 	if (fileContent === null) {
 		text += `\n\n${theme.fg("error", "[invalid content arg - expected string]")}`;
 	} else if (fileContent) {
@@ -162,11 +182,15 @@ function formatWriteCall(
 }
 
 function formatWriteResult(
-	result: { content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>; isError?: boolean },
+	result: {
+		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+		details?: WriteToolDetails;
+		isError?: boolean;
+	},
 	theme: Theme,
 ): string | undefined {
 	if (!result.isError) {
-		return undefined;
+		return result.details?.diff ? `\n${renderDiff(result.details.diff)}` : undefined;
 	}
 	const output = result.content
 		.filter((c) => c.type === "text")
@@ -181,7 +205,7 @@ function formatWriteResult(
 export function createWriteToolDefinition(
 	cwd: string,
 	options?: WriteToolOptions,
-): ToolDefinition<typeof writeSchema, undefined> {
+): ToolDefinition<typeof writeSchema, WriteToolDetails | undefined> {
 	const ops = options?.operations ?? defaultWriteOperations;
 	return {
 		name: "write",
@@ -201,6 +225,16 @@ export function createWriteToolDefinition(
 			const absolutePath = resolveToCwd(path, cwd);
 			const dir = dirname(absolutePath);
 			return withFileMutationQueue(absolutePath, async () => {
+				let previousContent: string | undefined;
+				if (ops.readFile) {
+					try {
+						previousContent = (await ops.readFile(absolutePath)).toString("utf8");
+					} catch {
+						// Diff metadata is best-effort and must never alter write authority.
+						previousContent = undefined;
+					}
+				}
+
 				// Do not reject from an abort event listener here: that would release the
 				// mutation queue while an in-flight filesystem operation may still finish.
 				// Checking signal.aborted after each await observes the same aborts while
@@ -218,9 +252,18 @@ export function createWriteToolDefinition(
 				await ops.writeFile(absolutePath, content);
 				throwIfAborted();
 
+				const canRenderDiff = previousContent !== undefined
+					&& previousContent !== content
+					&& previousContent.length <= WRITE_DIFF_MAX_CHARS
+					&& content.length <= WRITE_DIFF_MAX_CHARS
+					&& previousContent.split("\n", WRITE_DIFF_MAX_LINES + 1).length <= WRITE_DIFF_MAX_LINES
+					&& content.split("\n", WRITE_DIFF_MAX_LINES + 1).length <= WRITE_DIFF_MAX_LINES;
+				const change = canRenderDiff && previousContent !== undefined
+					? generateDiffString(previousContent, content)
+					: undefined;
 				return {
 					content: [{ type: "text", text: `Successfully wrote ${content.length} bytes to ${path}` }],
-					details: undefined,
+					details: change ? { diff: change.diff, firstChangedLine: change.firstChangedLine } : undefined,
 				};
 			});
 		},

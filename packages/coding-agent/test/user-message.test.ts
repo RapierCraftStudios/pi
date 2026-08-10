@@ -22,4 +22,18 @@ describe("UserMessageComponent", () => {
 		expect(lines[2].startsWith(OSC133_ZONE_END + OSC133_ZONE_FINAL)).toBe(true);
 		expect(lines[2].endsWith(BG_RESET)).toBe(true);
 	});
+
+	test("keeps attached images inside the user message terminal zone", () => {
+		initTheme("dark");
+		const component = new UserMessageComponent(
+			"Inspect [Image #1]",
+			undefined,
+			1,
+			[{ type: "image", data: Buffer.from("image").toString("base64"), mimeType: "image/png" }],
+		);
+		const lines = component.render(40);
+		expect(lines.length).toBeGreaterThan(3);
+		expect(lines[0]).toContain(OSC133_ZONE_START);
+		expect(lines.at(-1)?.startsWith(OSC133_ZONE_END + OSC133_ZONE_FINAL)).toBe(true);
+	});
 });

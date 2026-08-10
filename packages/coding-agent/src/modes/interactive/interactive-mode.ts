@@ -3,7 +3,6 @@
  * Handles TUI rendering and user interaction, delegating business logic to AgentSession.
  */
 
-import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -94,8 +93,9 @@ import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core
 import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";
-import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
+import { readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
+import { processImage } from "../../utils/image-process.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
@@ -117,10 +117,15 @@ import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
 import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
 import { FooterComponent, formatTokens } from "./components/footer.ts";
-import { renderForgeDockBrand } from "./components/forgedock-header.ts";
+import {
+	forgeDockBrandShinePosition,
+	renderForgeDockBrand,
+	shouldAnimateForgeDockBrand,
+} from "./components/forgedock-header.ts";
 import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { ModelSelectorComponent } from "./components/model-selector.ts";
+import { PendingImageAttachments, type SubmittedInput } from "./pending-image-attachments.ts";
 import {
 	type AuthSelectorProvider,
 	formatAuthSelectorProviderType,
@@ -172,6 +177,7 @@ function isExpandable(obj: unknown): obj is Expandable {
 class ExpandableText extends Text implements Expandable {
 	private readonly getCollapsedText: () => string;
 	private readonly getExpandedText: () => string;
+	private expanded: boolean;
 
 	constructor(
 		getCollapsedText: () => string,
@@ -183,15 +189,20 @@ class ExpandableText extends Text implements Expandable {
 		super(expanded ? getExpandedText() : getCollapsedText(), paddingX, paddingY);
 		this.getCollapsedText = getCollapsedText;
 		this.getExpandedText = getExpandedText;
+		this.expanded = expanded;
 	}
 
 	setExpanded(expanded: boolean): void {
-		this.setText(expanded ? this.getExpandedText() : this.getCollapsedText());
+		this.expanded = expanded;
+		this.refresh();
+	}
+
+	refresh(): void {
+		this.setText(this.expanded ? this.getExpandedText() : this.getCollapsedText());
 	}
 }
 
-type CompactionQueuedMessage = {
-	text: string;
+type CompactionQueuedMessage = SubmittedInput & {
 	mode: "steer" | "followUp";
 };
 
@@ -345,6 +356,10 @@ export class InteractiveMode {
 	private isInitialized = false;
 	private onInputCallback?: (text: string) => void;
 	private pendingUserInputs: string[] = [];
+	private pendingUserInputImages: Array<ImageContent[] | undefined> = [];
+	private nextUserInputImages: ImageContent[] | undefined;
+	private pendingImageAttachments = new PendingImageAttachments();
+	private clipboardPastePending = false;
 	private activeStatusIndicator: StatusIndicator | undefined = undefined;
 	private readonly idleStatus = new IdleStatus();
 	private workingMessage: string | undefined = undefined;
@@ -733,9 +748,10 @@ export class InteractiveMode {
 
 		// Add header with keybindings from config (unless silenced)
 		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
-			const logo =
+			const animateForgeDockBrand = APP_NAME === "forgedock" && shouldAnimateForgeDockBrand();
+			let logo =
 				APP_NAME === "forgedock"
-					? renderForgeDockBrand(this.version)
+					? renderForgeDockBrand(this.version, animateForgeDockBrand ? forgeDockBrandShinePosition(0) : undefined)
 					: theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
 
 			// Build startup instructions using keybinding hint helpers
@@ -773,15 +789,14 @@ export class InteractiveMode {
 				"dim",
 				`Press ${keyText("app.tools.expand")} to show full startup help and loaded resources.`,
 			);
-			const onboarding = theme.fg(
-				"dim",
+			const onboarding =
 				APP_NAME === "forgedock"
-					? "GitHub artifacts are durable memory; ForgeDock's typed controller remains authoritative."
-					: "Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.",
-			);
+					? ""
+					: theme.fg("dim", "Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.");
+			const onboardingSuffix = onboarding ? `\n\n${onboarding}` : "";
 			this.builtInHeader = new ExpandableText(
-				() => `${logo}\n${compactInstructions}\n${compactOnboarding}\n\n${onboarding}`,
-				() => `${logo}\n${expandedInstructions}\n\n${onboarding}`,
+				() => `${logo}\n${compactInstructions}\n${compactOnboarding}${onboardingSuffix}`,
+				() => `${logo}\n${expandedInstructions}${onboardingSuffix}`,
 				this.getStartupExpansionState(),
 				1,
 				0,
@@ -791,6 +806,22 @@ export class InteractiveMode {
 			this.headerContainer.addChild(new Spacer(1));
 			this.headerContainer.addChild(this.builtInHeader);
 			this.headerContainer.addChild(new Spacer(1));
+
+			if (animateForgeDockBrand) {
+				const frames = 14;
+				let frame = 0;
+				const shimmerTimer = setInterval(() => {
+					frame += 1;
+					logo = renderForgeDockBrand(
+						this.version,
+						frame <= frames ? forgeDockBrandShinePosition(frame, frames) : undefined,
+					);
+					this.builtInHeader instanceof ExpandableText && this.builtInHeader.refresh();
+					this.ui.requestRender();
+					if (frame > frames) clearInterval(shimmerTimer);
+				}, 55);
+				shimmerTimer.unref();
+			}
 		} else {
 			// Minimal header when silenced
 			this.builtInHeader = new Text("", 0, 0);
@@ -925,8 +956,10 @@ export class InteractiveMode {
 		// Main interactive loop
 		while (true) {
 			const userInput = await this.getUserInput();
+			const images = this.nextUserInputImages;
+			this.nextUserInputImages = undefined;
 			try {
-				await this.session.prompt(userInput);
+				await this.session.prompt(userInput, images ? { images } : undefined);
 			} catch (error: unknown) {
 				const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 				this.showError(errorMessage);
@@ -2649,16 +2682,33 @@ export class InteractiveMode {
 	}
 
 	private async handleClipboardPaste(): Promise<void> {
+		if (this.clipboardPastePending) return;
+		this.clipboardPastePending = true;
 		try {
 			const image = await readClipboardImage();
 			if (image) {
-				const tmpDir = os.tmpdir();
-				const ext = extensionForImageMimeType(image.mimeType) ?? "png";
-				const fileName = `pi-clipboard-${crypto.randomUUID()}.${ext}`;
-				const filePath = path.join(tmpDir, fileName);
-				fs.writeFileSync(filePath, Buffer.from(image.bytes));
-
-				this.editor.insertTextAtCursor?.(filePath);
+				if (this.settingsManager.getBlockImages()) {
+					this.showWarning("Image attachments are disabled in settings.");
+					return;
+				}
+				if (image.bytes.length > 20 * 1024 * 1024) {
+					this.showWarning(`Clipboard image is too large (${(image.bytes.length / 1024 / 1024).toFixed(1)}MB; maximum 20MB).`);
+					return;
+				}
+				const processed = await processImage(image.bytes, image.mimeType, {
+					autoResizeImages: this.settingsManager.getImageAutoResize(),
+				});
+				if (!processed.ok) {
+					this.showWarning(processed.message);
+					return;
+				}
+				const attachment = this.pendingImageAttachments.add({
+					type: "image",
+					data: processed.data,
+					mimeType: processed.mimeType,
+				});
+				this.editor.insertTextAtCursor?.(`${attachment.marker} `);
+				this.showStatus(`Attached ${attachment.marker}${processed.hints.length ? ` · ${processed.hints.join(" ")}` : ""}`);
 				this.ui.requestRender();
 				return;
 			}
@@ -2668,8 +2718,10 @@ export class InteractiveMode {
 				this.editor.insertTextAtCursor?.(text);
 				this.ui.requestRender();
 			}
-		} catch {
-			// Silently ignore clipboard errors (may not have permission, etc.)
+		} catch (error) {
+			this.showWarning(`Clipboard paste failed: ${error instanceof Error ? error.message : String(error)}`);
+		} finally {
+			this.clipboardPastePending = false;
 		}
 	}
 
@@ -2833,7 +2885,7 @@ export class InteractiveMode {
 					this.editor.setText("");
 					await this.session.prompt(text);
 				} else {
-					this.queueCompactionMessage(text, "steer");
+					this.queueCompactionMessage(this.pendingImageAttachments.consume(text), "steer");
 				}
 				return;
 			}
@@ -2841,9 +2893,13 @@ export class InteractiveMode {
 			// If streaming, use prompt() with steer behavior
 			// This handles extension commands (execute immediately), prompt template expansion, and queueing
 			if (this.session.isStreaming) {
+				const submitted = this.pendingImageAttachments.consume(text);
 				this.editor.addToHistory?.(text);
 				this.editor.setText("");
-				await this.session.prompt(text, { streamingBehavior: "steer" });
+				await this.session.prompt(submitted.text, {
+					streamingBehavior: "steer",
+					...(submitted.images ? { images: submitted.images } : {}),
+				});
 				this.updatePendingMessagesDisplay();
 				this.ui.requestRender();
 				return;
@@ -2853,10 +2909,13 @@ export class InteractiveMode {
 			// First, move any pending bash components to chat
 			this.flushPendingBashComponents();
 
+			const submitted = this.pendingImageAttachments?.consume(text) ?? { text };
 			if (this.onInputCallback) {
-				this.onInputCallback(text);
+				this.nextUserInputImages = submitted.images;
+				this.onInputCallback(submitted.text);
 			} else {
-				this.pendingUserInputs.push(text);
+				this.pendingUserInputs.push(submitted.text);
+				(this.pendingUserInputImages ??= []).push(submitted.images);
 			}
 			this.editor.addToHistory?.(text);
 		};
@@ -3207,6 +3266,11 @@ export class InteractiveMode {
 		return textBlocks.map((c) => (c as { text: string }).text).join("");
 	}
 
+	private getUserMessageImages(message: Message): ImageContent[] {
+		if (message.role !== "user" || typeof message.content === "string") return [];
+		return message.content.filter((content): content is ImageContent => content.type === "image");
+	}
+
 	/**
 	 * Show a status message in the chat.
 	 *
@@ -3301,7 +3365,8 @@ export class InteractiveMode {
 			}
 			case "user": {
 				const textContent = this.getUserMessageText(message);
-				if (textContent) {
+				const imageContent = this.getUserMessageImages(message);
+				if (textContent || imageContent.length) {
 					if (this.chatContainer.children.length > 0) {
 						this.chatContainer.addChild(new Spacer(1));
 					}
@@ -3321,6 +3386,9 @@ export class InteractiveMode {
 								skillBlock.userMessage,
 								this.getMarkdownThemeWithSettings(),
 								this.outputPad,
+								imageContent,
+								this.settingsManager.getShowImages(),
+								this.settingsManager.getImageWidthCells(),
 							);
 							this.chatContainer.addChild(userComponent);
 						}
@@ -3329,6 +3397,9 @@ export class InteractiveMode {
 							textContent,
 							this.getMarkdownThemeWithSettings(),
 							this.outputPad,
+							imageContent,
+							this.settingsManager.getShowImages(),
+							this.settingsManager.getImageWidthCells(),
 						);
 						this.chatContainer.addChild(userComponent);
 					}
@@ -3532,6 +3603,7 @@ export class InteractiveMode {
 	async getUserInput(): Promise<string> {
 		const queuedInput = this.pendingUserInputs.shift();
 		if (queuedInput !== undefined) {
+			this.nextUserInputImages = this.pendingUserInputImages?.shift();
 			return queuedInput;
 		}
 
@@ -3757,7 +3829,7 @@ export class InteractiveMode {
 				this.editor.setText("");
 				await this.session.prompt(text);
 			} else {
-				this.queueCompactionMessage(text, "followUp");
+				this.queueCompactionMessage(this.pendingImageAttachments.consume(text), "followUp");
 			}
 			return;
 		}
@@ -3765,9 +3837,13 @@ export class InteractiveMode {
 		// Alt+Enter queues a follow-up message (waits until agent finishes)
 		// This handles extension commands (execute immediately), prompt template expansion, and queueing
 		if (this.session.isStreaming) {
+			const submitted = this.pendingImageAttachments.consume(text);
 			this.editor.addToHistory?.(text);
 			this.editor.setText("");
-			await this.session.prompt(text, { streamingBehavior: "followUp" });
+			await this.session.prompt(submitted.text, {
+				streamingBehavior: "followUp",
+				...(submitted.images ? { images: submitted.images } : {}),
+			});
 			this.updatePendingMessagesDisplay();
 			this.ui.requestRender();
 		}
@@ -4027,9 +4103,9 @@ export class InteractiveMode {
 		return allQueued.length;
 	}
 
-	private queueCompactionMessage(text: string, mode: "steer" | "followUp"): void {
-		this.compactionQueuedMessages.push({ text, mode });
-		this.editor.addToHistory?.(text);
+	private queueCompactionMessage(input: SubmittedInput, mode: "steer" | "followUp"): void {
+		this.compactionQueuedMessages.push({ ...input, mode });
+		this.editor.addToHistory?.(input.text);
 		this.editor.setText("");
 		this.updatePendingMessagesDisplay();
 		this.showStatus("Queued message for after compaction");
@@ -4072,9 +4148,9 @@ export class InteractiveMode {
 					if (this.isExtensionCommand(message.text)) {
 						await this.session.prompt(message.text);
 					} else if (message.mode === "followUp") {
-						await this.session.followUp(message.text);
+						await this.session.followUp(message.text, message.images);
 					} else {
-						await this.session.steer(message.text);
+						await this.session.steer(message.text, message.images);
 					}
 				}
 				this.updatePendingMessagesDisplay();
@@ -4102,7 +4178,10 @@ export class InteractiveMode {
 
 			// Start a prompt when idle, or queue it into a run still finishing compaction.
 			const promptPromise = this.session
-				.prompt(firstPrompt.text, { streamingBehavior: firstPrompt.mode })
+				.prompt(firstPrompt.text, {
+					streamingBehavior: firstPrompt.mode,
+					...(firstPrompt.images ? { images: firstPrompt.images } : {}),
+				})
 				.catch((error) => {
 					restoreQueue(error);
 				});
@@ -4112,9 +4191,9 @@ export class InteractiveMode {
 				if (this.isExtensionCommand(message.text)) {
 					await this.session.prompt(message.text);
 				} else if (message.mode === "followUp") {
-					await this.session.followUp(message.text);
+					await this.session.followUp(message.text, message.images);
 				} else {
-					await this.session.steer(message.text);
+					await this.session.steer(message.text, message.images);
 				}
 			}
 			this.updatePendingMessagesDisplay();
@@ -4871,7 +4950,7 @@ export class InteractiveMode {
 	}
 
 	private async runForgeDockOnboarding(): Promise<void> {
-		this.showStatus("ForgeDock setup · detecting provider credentials");
+		this.showStatus("ForgeDock setup · checking provider authentication");
 		let availableModels: Model<any>[] = [];
 		try {
 			await this.session.modelRuntime.refresh();
@@ -4880,17 +4959,27 @@ export class InteractiveMode {
 			availableModels = [...this.session.modelRuntime.getAvailableSnapshot()];
 		}
 
-		let connectProvider = true;
-		if (availableModels.length > 0) {
+		// A model catalog can exist before credentials do. Only offer the
+		// detected-credentials shortcut when an authenticated provider actually
+		// backs one of the available models.
+		const detectedModel = availableModels.find((model) => this.session.modelRuntime.hasConfiguredAuth(model.provider));
+		let connectProvider = detectedModel === undefined;
+		if (detectedModel) {
 			const choice = await this.selectForgeDockSetupChoice(availableModels.length);
 			if (choice === undefined) return;
 			connectProvider = choice === "connect";
 		}
 
 		if (connectProvider) {
-			const provider = await this.selectForgeDockOnboardingProvider();
+			const authType = await this.selectForgeDockOnboardingAuthType();
+			if (!authType) return;
+			const provider = await this.selectForgeDockOnboardingProvider(authType);
 			if (!provider) return;
-			await this.startProviderLogin(provider);
+			const loginCompleted = await this.startProviderLogin(provider);
+			if (!loginCompleted) {
+				this.showWarning("Provider connection was not completed. Restart ForgeDock to try onboarding again.");
+				return;
+			}
 			try {
 				await this.session.modelRuntime.refresh();
 			} catch {
@@ -4920,7 +5009,7 @@ export class InteractiveMode {
 		return new Promise((resolve) => {
 			this.showSelector((done) => {
 				const detected = `Use detected credentials · ${modelCount} model${modelCount === 1 ? "" : "s"} available`;
-				const connect = "Connect or replace a provider account";
+				const connect = "Connect or replace a provider account or API key";
 				const selector = new ExtensionSelectorComponent(
 					"Provider setup · step 2 of 3",
 					[detected, connect],
@@ -4938,27 +5027,64 @@ export class InteractiveMode {
 		});
 	}
 
-	private selectForgeDockOnboardingProvider(): Promise<AuthSelectorProvider | undefined> {
-		const providers = this.getLoginProviderOptions().filter(
+	private getForgeDockOnboardingProviderOptions(authType?: AuthSelectorProvider["authType"]): AuthSelectorProvider[] {
+		return this.getLoginProviderOptions(authType).filter(
 			(provider) => provider.authType === "oauth" || provider.method?.login !== undefined,
 		);
-		if (providers.length === 0) {
+	}
+
+	private selectForgeDockOnboardingAuthType(): Promise<AuthSelectorProvider["authType"] | undefined> {
+		const providers = this.getForgeDockOnboardingProviderOptions();
+		const authTypes = new Set(providers.map((provider) => provider.authType));
+		const options = [
+			...(authTypes.has("oauth")
+				? [{ label: "Sign in with a provider account (subscription)", authType: "oauth" as const }]
+				: []),
+			...(authTypes.has("api_key") ? [{ label: "Use an API key", authType: "api_key" as const }] : []),
+		];
+		if (options.length === 0) {
 			this.showError("No interactive provider login methods are available. Configure a provider key and restart ForgeDock.");
 			return Promise.resolve(undefined);
 		}
+
 		return new Promise((resolve) => {
 			this.showSelector((done) => {
-				const selector = new OAuthSelectorComponent(
-					"login",
-					providers,
-					(providerId, authType) => {
+				const selector = new ExtensionSelectorComponent(
+					"Connect a model provider · step 2 of 3",
+					options.map((option) => option.label),
+					(label) => {
 						done();
-						resolve(providers.find((provider) => provider.id === providerId && provider.authType === authType));
+						resolve(options.find((option) => option.label === label)?.authType);
 					},
 					() => {
 						done();
 						resolve(undefined);
 					},
+				);
+				return { component: selector, focus: selector };
+			});
+		});
+	}
+
+	private selectForgeDockOnboardingProvider(
+		authType: AuthSelectorProvider["authType"],
+	): Promise<AuthSelectorProvider | undefined> {
+		const providers = this.getForgeDockOnboardingProviderOptions(authType);
+		return new Promise((resolve) => {
+			this.showSelector((done) => {
+				const selector = new OAuthSelectorComponent(
+					"login",
+					providers,
+					(providerId, selectedAuthType) => {
+						done();
+						resolve(providers.find((provider) => provider.id === providerId && provider.authType === selectedAuthType));
+					},
+					() => {
+						done();
+						resolve(undefined);
+					},
+					undefined,
+					"Choose the provider to connect · step 2 of 3",
 				);
 				return { component: selector, focus: selector };
 			});
@@ -5092,14 +5218,15 @@ export class InteractiveMode {
 		this.showLoginProviderSelector(undefined, providerRef);
 	}
 
-	private async startProviderLogin(providerOption: AuthSelectorProvider): Promise<void> {
+	private async startProviderLogin(providerOption: AuthSelectorProvider): Promise<boolean> {
 		if (providerOption.authType === "oauth") {
-			await this.showLoginDialog(providerOption.id, providerOption.name);
-		} else if (providerOption.method?.login) {
-			await this.showApiKeyLoginDialog(providerOption.id, providerOption.name);
-		} else {
-			this.showAmbientAuthDialog(providerOption);
+			return this.showLoginDialog(providerOption.id, providerOption.name);
 		}
+		if (providerOption.method?.login) {
+			return this.showApiKeyLoginDialog(providerOption.id, providerOption.name);
+		}
+		this.showAmbientAuthDialog(providerOption);
+		return false;
 	}
 
 	private showLoginAuthTypeSelector(providerOptions?: AuthSelectorProvider[]): void {
@@ -5326,7 +5453,7 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	private async showApiKeyLoginDialog(providerId: string, providerName: string): Promise<void> {
+	private async showApiKeyLoginDialog(providerId: string, providerName: string): Promise<boolean> {
 		const previousModel = this.session.model;
 
 		const dialog = new LoginDialogComponent(
@@ -5362,12 +5489,14 @@ export class InteractiveMode {
 			await this.loginProvider(dialog, providerId, "api_key");
 			restoreEditor();
 			await this.completeProviderAuthentication(providerId, providerName, "api_key", previousModel);
+			return true;
 		} catch (error: unknown) {
 			restoreEditor();
 			const errorMsg = error instanceof Error ? error.message : String(error);
 			if (errorMsg !== "Login cancelled") {
 				this.showError(`Failed to save API key for ${providerName}: ${errorMsg}`);
 			}
+			return false;
 		}
 	}
 
@@ -5453,7 +5582,7 @@ export class InteractiveMode {
 		});
 	}
 
-	private async showLoginDialog(providerId: string, providerName: string): Promise<void> {
+	private async showLoginDialog(providerId: string, providerName: string): Promise<boolean> {
 		const previousModel = this.session.model;
 		const dialog = new LoginDialogComponent(this.ui, providerId, (_success, _message) => {}, providerName);
 		this.editorContainer.clear();
@@ -5472,12 +5601,14 @@ export class InteractiveMode {
 			await this.loginProvider(dialog, providerId, "oauth");
 			restoreEditor();
 			await this.completeProviderAuthentication(providerId, providerName, "oauth", previousModel);
+			return true;
 		} catch (error: unknown) {
 			restoreEditor();
 			const errorMsg = error instanceof Error ? error.message : String(error);
 			if (errorMsg !== "Login cancelled") {
 				this.showError(`Failed to login to ${providerName}: ${errorMsg}`);
 			}
+			return false;
 		}
 	}
 

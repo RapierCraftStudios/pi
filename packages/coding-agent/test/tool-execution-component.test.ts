@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, test } from "vitest";
 import { getReadmePath } from "../src/config.ts";
 import type { ToolDefinition } from "../src/core/extensions/types.ts";
 import { type BashOperations, createBashToolDefinition } from "../src/core/tools/bash.ts";
+import { createGrepToolDefinition } from "../src/core/tools/grep.ts";
 import { createReadTool, createReadToolDefinition } from "../src/core/tools/read.ts";
 import { createWriteToolDefinition } from "../src/core/tools/write.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
@@ -374,6 +375,7 @@ describe("ToolExecutionComponent parity", () => {
 			createFakeTui(),
 			process.cwd(),
 		);
+		component.setExpanded(true);
 		const rendered = stripAnsi(component.render(120).join("\n"));
 		expect(rendered).toContain("one");
 		expect(rendered).toContain("two");
@@ -505,6 +507,50 @@ describe("ToolExecutionComponent parity", () => {
 			expect(expanded).toContain(scenario.hidden);
 		});
 	}
+
+	test("summarizes search output until expanded", () => {
+		const component = new ToolExecutionComponent(
+			"grep",
+			"tool-grep-balanced",
+			{ pattern: "needle", path: "src" },
+			{},
+			createGrepToolDefinition(process.cwd()),
+			createFakeTui(),
+			process.cwd(),
+		);
+		component.updateResult({
+			content: [{ type: "text", text: "src/a.ts:1:needle\nsrc/b.ts:2:needle" }],
+			details: undefined,
+			isError: false,
+		}, false);
+
+		const collapsed = stripAnsi(component.render(120).join("\n"));
+		expect(collapsed).toContain("2 matches");
+		expect(collapsed).not.toContain("src/a.ts:1");
+
+		component.setExpanded(true);
+		expect(stripAnsi(component.render(120).join("\n"))).toContain("src/a.ts:1:needle");
+	});
+
+	test("summarizes pending writes until expanded", () => {
+		const content = "first line\nsecond line";
+		const component = new ToolExecutionComponent(
+			"write",
+			"tool-write-balanced",
+			{ path: "src/new.ts", content },
+			{},
+			createWriteToolDefinition(process.cwd()),
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		const collapsed = stripAnsi(component.render(120).join("\n"));
+		expect(collapsed).toContain("2 lines");
+		expect(collapsed).not.toContain("first line");
+
+		component.setExpanded(true);
+		expect(stripAnsi(component.render(120).join("\n"))).toContain("first line");
+	});
 
 	for (const scenario of [
 		{ title: "SKILL.md", path: join(process.cwd(), "attio", "SKILL.md"), compact: "[skill] attio:120-329" },

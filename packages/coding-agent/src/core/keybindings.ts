@@ -61,6 +61,10 @@ declare module "@earendil-works/pi-tui" {
 	interface Keybindings extends AppKeybindings {}
 }
 
+export function defaultImagePasteKeys(platform: NodeJS.Platform = process.platform): KeyId[] {
+	return platform === "win32" ? ["ctrl+v", "alt+v", "ctrl+alt+v"] : ["ctrl+v"];
+}
+
 export const KEYBINDINGS = {
 	...TUI_KEYBINDINGS,
 	"app.interrupt": { defaultKeys: "escape", description: "Cancel or abort" },
@@ -109,7 +113,7 @@ export const KEYBINDINGS = {
 		description: "Restore queued messages",
 	},
 	"app.clipboard.pasteImage": {
-		defaultKeys: process.platform === "win32" ? "alt+v" : "ctrl+v",
+		defaultKeys: defaultImagePasteKeys(),
 		description: "Paste image from clipboard (text fallback)",
 	},
 	"app.session.new": { defaultKeys: [], description: "Start a new session" },

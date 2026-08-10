@@ -67,17 +67,23 @@ function formatLsResult(
 	options: ToolRenderResultOptions,
 	theme: Theme,
 	showImages: boolean,
+	isError = false,
 ): string {
 	const output = getTextOutput(result, showImages).trim();
 	let text = "";
 	if (output) {
 		const lines = output.split("\n");
-		const maxLines = options.expanded ? lines.length : 20;
-		const displayLines = lines.slice(0, maxLines);
-		const remaining = lines.length - maxLines;
-		text += `\n${displayLines.map((line) => theme.fg("toolOutput", line)).join("\n")}`;
-		if (remaining > 0) {
-			text += `${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
+		if (!options.expanded && !isError) {
+			const count = lines.filter((line) => line.trim()).length;
+			text += `\n${theme.fg("muted", `↳ ${count} ${count === 1 ? "entry" : "entries"} ·`)} ${keyHint("app.tools.expand", "to preview")}`;
+		} else {
+			const maxLines = options.expanded ? lines.length : 20;
+			const displayLines = lines.slice(0, maxLines);
+			const remaining = lines.length - maxLines;
+			text += `\n${displayLines.map((line) => theme.fg("toolOutput", line)).join("\n")}`;
+			if (remaining > 0) {
+				text += `${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
+			}
 		}
 	}
 
@@ -214,7 +220,7 @@ export function createLsToolDefinition(
 		},
 		renderResult(result, options, theme, context) {
 			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(formatLsResult(result as any, options, theme, context.showImages));
+			text.setText(formatLsResult(result as any, options, theme, context.showImages, context.isError));
 			return text;
 		},
 	};

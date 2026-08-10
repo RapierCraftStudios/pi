@@ -80,6 +80,7 @@ describe("OAuthSelectorComponent", () => {
 		);
 
 		const output = stripAnsi(selector.render(120).join("\n"));
+		expect(output).toContain("[API key]");
 		expect(output).toContain("unconfigured");
 		expect(output).not.toContain("✓ configured");
 	});

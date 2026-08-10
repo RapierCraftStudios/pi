@@ -31,7 +31,10 @@ import {
 	createAgentSessionFromServices,
 	createAgentSessionServices,
 } from "./core/agent-session-services.ts";
-import { formatNoModelsAvailableMessage } from "./core/auth-guidance.ts";
+import {
+	formatNoModelsAvailableMessage,
+	modelFallbackMessageForInteractiveStartup,
+} from "./core/auth-guidance.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
@@ -875,7 +878,7 @@ export async function main(args: string[], options?: MainOptions) {
 		const interactiveMode = new InteractiveMode(runtime, {
 			migratedProviders,
 			forgeDockOnboarding,
-			modelFallbackMessage,
+			modelFallbackMessage: modelFallbackMessageForInteractiveStartup(modelFallbackMessage, forgeDockOnboarding),
 			autoTrustOnReloadCwd,
 			initialMessage,
 			initialImages,
