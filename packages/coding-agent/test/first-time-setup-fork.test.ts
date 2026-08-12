@@ -17,10 +17,12 @@ describe("shouldRunFirstTimeSetup in forked distributions", () => {
 	const originalPiExperimental = process.env.PI_EXPERIMENTAL;
 	let tempDir: string;
 	let settingsPath: string;
+	let authPath: string;
 
 	beforeEach(() => {
 		tempDir = mkdtempSync(join(tmpdir(), "pi-first-time-setup-fork-"));
 		settingsPath = join(tempDir, "settings.json");
+		authPath = join(tempDir, "auth.json");
 		process.env.PI_EXPERIMENTAL = "1";
 	});
 
@@ -35,8 +37,8 @@ describe("shouldRunFirstTimeSetup in forked distributions", () => {
 
 	it("runs ForgeDock onboarding until its completion receipt exists", () => {
 		const receiptPath = join(tempDir, "onboarding.json");
-		expect(shouldRunFirstTimeSetup(settingsPath, receiptPath)).toBe(true);
+		expect(shouldRunFirstTimeSetup(settingsPath, receiptPath, authPath)).toBe(true);
 		writeFileSync(receiptPath, "{}\n");
-		expect(shouldRunFirstTimeSetup(settingsPath, receiptPath)).toBe(false);
+		expect(shouldRunFirstTimeSetup(settingsPath, receiptPath, authPath)).toBe(false);
 	});
 });

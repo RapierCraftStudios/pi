@@ -2,8 +2,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryModelsStore, type Model, type Provider } from "@earendil-works/pi-ai";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
+import { allowNetwork } from "./test-network-env.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 
@@ -82,6 +83,87 @@ describe("extension provider model lifecycle", () => {
 
 		registry.unregisterProvider("extension-native");
 		expect(registry.getProvider("extension-native")).toBeUndefined();
+	});
+
+	it("does not block login on a stalled post-login catalog refresh", async () => {
+		allowNetwork();
+		const timeoutController = new AbortController();
+		const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeoutController.signal);
+		try {
+			const runtime = await ModelRuntime.create({
+				credentials: AuthStorage.inMemory(),
+				modelsStore: new InMemoryModelsStore(),
+				modelsPath: null,
+				allowModelNetwork: false,
+			});
+			const oauthModel: Model<"openai-completions"> = {
+				...model("oauth"),
+				provider: "extension-login",
+			};
+			let refreshStarted = false;
+			let refreshAborted = false;
+			runtime.registerNativeProvider({
+				id: "extension-login",
+				name: "Extension login",
+				auth: {
+					oauth: {
+						name: "Extension login",
+						login: async () => ({
+							type: "oauth",
+							access: "access",
+							refresh: "refresh",
+							expires: Date.now() + 60_000,
+						}),
+						refresh: async (credential) => credential,
+						toAuth: async (credential) => ({ apiKey: credential.access }),
+					},
+				},
+				getModels: () => [oauthModel],
+				refreshModels: async ({ allowNetwork, signal }) => {
+					if (!allowNetwork) return;
+					refreshStarted = true;
+					await new Promise<void>((resolve) => {
+						if (signal?.aborted) {
+							refreshAborted = true;
+							resolve();
+							return;
+						}
+						signal?.addEventListener(
+							"abort",
+							() => {
+								refreshAborted = true;
+								resolve();
+							},
+							{ once: true },
+						);
+					});
+				},
+				stream: () => {
+					throw new Error("unused");
+				},
+				streamSimple: () => {
+					throw new Error("unused");
+				},
+			});
+			await runtime.refresh({ allowNetwork: false });
+
+			const loginPromise = runtime.login("extension-login", "oauth", {
+				prompt: async () => "unused",
+				notify: () => {},
+			});
+			for (let attempt = 0; attempt < 20 && !refreshStarted; attempt++) {
+				await Promise.resolve();
+			}
+			expect(refreshStarted).toBe(true);
+			expect(refreshAborted).toBe(false);
+			timeoutController.abort();
+
+			expect(timeoutSpy).toHaveBeenCalledWith(15_000);
+			expect(refreshAborted).toBe(true);
+			await expect(loginPromise).resolves.toMatchObject({ type: "oauth", access: "access" });
+		} finally {
+			timeoutSpy.mockRestore();
+		}
 	});
 
 	it("applies models.json overrides above native providers", async () => {

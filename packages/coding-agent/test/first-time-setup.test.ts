@@ -11,10 +11,12 @@ describe("shouldRunFirstTimeSetup", () => {
 	const originalAgentDir = process.env[ENV_AGENT_DIR];
 	let tempDir: string;
 	let settingsPath: string;
+	let authPath: string;
 
 	beforeEach(() => {
 		tempDir = mkdtempSync(join(tmpdir(), "pi-first-time-setup-"));
 		settingsPath = join(tempDir, "settings.json");
+		authPath = join(tempDir, "auth.json");
 		process.env.PI_EXPERIMENTAL = "1";
 		delete process.env[ENV_AGENT_DIR];
 	});
@@ -34,28 +36,33 @@ describe("shouldRunFirstTimeSetup", () => {
 	});
 
 	it("runs ForgeDock onboarding when its receipt is absent", () => {
-		expect(shouldRunFirstTimeSetup(settingsPath, join(tempDir, "onboarding.json"))).toBe(true);
+		expect(shouldRunFirstTimeSetup(settingsPath, join(tempDir, "onboarding.json"), authPath)).toBe(true);
 	});
 
 	it("does not require Pi's experimental flag", () => {
 		delete process.env.PI_EXPERIMENTAL;
-		expect(shouldRunFirstTimeSetup(settingsPath, join(tempDir, "onboarding.json"))).toBe(true);
+		expect(shouldRunFirstTimeSetup(settingsPath, join(tempDir, "onboarding.json"), authPath)).toBe(true);
 	});
 
 	it("supports a custom ForgeDock agent directory", () => {
 		process.env[ENV_AGENT_DIR] = tempDir;
-		expect(shouldRunFirstTimeSetup(settingsPath, join(tempDir, "onboarding.json"))).toBe(true);
+		expect(shouldRunFirstTimeSetup(settingsPath, join(tempDir, "onboarding.json"), authPath)).toBe(true);
 	});
 
 	it("does not mistake partial theme settings for completed onboarding", () => {
 		writeFileSync(settingsPath, "{}", "utf-8");
-		expect(shouldRunFirstTimeSetup(settingsPath, join(tempDir, "onboarding.json"))).toBe(true);
+		expect(shouldRunFirstTimeSetup(settingsPath, join(tempDir, "onboarding.json"), authPath)).toBe(true);
+	});
+
+	it("does not restart setup when stored credentials already exist", () => {
+		writeFileSync(authPath, JSON.stringify({ "openai-codex": { type: "oauth" } }), "utf-8");
+		expect(shouldRunFirstTimeSetup(settingsPath, join(tempDir, "onboarding.json"), authPath)).toBe(false);
 	});
 
 	it("stops after a completion receipt is written", () => {
 		const receiptPath = join(tempDir, "onboarding.json");
 		writeFileSync(receiptPath, "{}", "utf-8");
-		expect(shouldRunFirstTimeSetup(settingsPath, receiptPath)).toBe(false);
+		expect(shouldRunFirstTimeSetup(settingsPath, receiptPath, authPath)).toBe(false);
 	});
 });
 
