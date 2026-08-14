@@ -770,6 +770,50 @@ describe("Coding Agent Tools", () => {
 	});
 
 	describe("grep tool", () => {
+		it("uses a host search operation before ripgrep discovery", async () => {
+			const previousPath = process.env.PATH;
+			const previousOffline = process.env.PI_OFFLINE;
+			process.env.PATH = join(testDir, "missing-bin");
+			process.env.PI_OFFLINE = "1";
+			try {
+				const search = vi.fn(async () => ({
+					matches: [{ filePath: join(testDir, "host-result.ts"), lineNumber: 3, lineText: "from host search" }],
+					truncated: true,
+				}));
+				const tool = createGrepTool(testDir, {
+					operations: {
+						isDirectory: () => true,
+						readFile: () => "unused",
+						search,
+					},
+				});
+
+				const result = await tool.execute("test-call-host-grep", {
+					pattern: "not present on disk",
+					path: ".",
+					glob: "*.ts",
+					ignoreCase: true,
+					literal: true,
+					limit: 7,
+				});
+
+				expect(getTextOutput(result)).toContain("host-result.ts:3: from host search");
+				expect(result.details?.matchLimitReached).toBe(7);
+				expect(search).toHaveBeenCalledWith(expect.objectContaining({
+					pattern: "not present on disk",
+					glob: "*.ts",
+					ignoreCase: true,
+					literal: true,
+					maxResults: 7,
+				}));
+			} finally {
+				if (previousPath === undefined) delete process.env.PATH;
+				else process.env.PATH = previousPath;
+				if (previousOffline === undefined) delete process.env.PI_OFFLINE;
+				else process.env.PI_OFFLINE = previousOffline;
+			}
+		});
+
 		it("should include filename when searching a single file", async () => {
 			const testFile = join(testDir, "example.txt");
 			writeFileSync(testFile, "first line\nmatch line\nlast line");
